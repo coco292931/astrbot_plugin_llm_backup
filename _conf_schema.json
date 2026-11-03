@@ -1,0 +1,337 @@
+{
+  "enabled": {
+    "type": "bool",
+    "description": "启用对话备份",
+    "default": true,
+    "obvious_hint": true
+  },
+  "backup_root": {
+    "type": "string",
+    "description": "备份根目录",
+    "hint": "留空使用 data/plugin_data/astrbot_plugin_llm_backup/backup。支持 ~ 与环境变量；相对路径以插件数据目录为基准。Windows 与 Linux 均可使用。",
+    "default": ""
+  },
+  "session_dir_template": {
+    "type": "string",
+    "description": "会话目录名模板",
+    "hint": "可用占位符：{platform}、{message_type}、{session_id}。",
+    "default": "{platform}_{message_type}_{session_id}"
+  },
+  "conversation_file_template": {
+    "type": "string",
+    "description": "对话文件名模板",
+    "hint": "可用占位符：{conv_short}、{conv_title}。默认只用稳定短 ID；加入 {conv_title} 会在对话改名时拆分成新文件。",
+    "default": "{conv_short}"
+  },
+  "filter_mode": {
+    "type": "string",
+    "description": "会话过滤模式",
+    "options": ["whitelist", "blacklist", "all"],
+    "labels": ["白名单", "黑名单", "全部"],
+    "default": "whitelist"
+  },
+  "umos": {
+    "type": "list",
+    "description": "参与备份的会话来源",
+    "_special": "umo",
+    "hint": "白名单模式下为空表示全部会话；黑名单模式下表示排除这些会话。",
+    "default": []
+  },
+  "senders": {
+    "type": "list",
+    "description": "参与备份的用户",
+    "_special": "sender_id",
+    "hint": "留空表示不限用户。",
+    "default": []
+  },
+  "include_private": {
+    "type": "bool",
+    "description": "备份私聊",
+    "default": true
+  },
+  "include_groups": {
+    "type": "bool",
+    "description": "备份群聊",
+    "default": false
+  },
+  "include_webchat": {
+    "type": "bool",
+    "description": "备份 WebChat",
+    "default": true
+  },
+  "include_cron": {
+    "type": "bool",
+    "description": "备份定时任务触发的对话",
+    "default": false
+  },
+  "include_plugin_initiated": {
+    "type": "bool",
+    "description": "备份其他插件主动发起的 LLM 请求",
+    "default": false
+  },
+  "detail_level": {
+    "type": "string",
+    "description": "记录详细度预设",
+    "options": ["minimal", "standard", "full"],
+    "labels": ["精简", "标准", "完整"],
+    "subtitles": [
+      "仅记录用户输入与回复摘要",
+      "记录输入、回复、思考摘要与工具调用摘要",
+      "记录全部内容与工具结果"
+    ],
+    "default": "standard"
+  },
+  "capture": {
+    "type": "object",
+    "description": "逐项覆盖详细度",
+    "items": {
+      "user_input": {
+        "type": "string",
+        "description": "用户输入",
+        "options": ["follow", "off", "summary", "full"],
+        "labels": ["跟随预设", "不记录", "摘要", "完整"],
+        "default": "follow"
+      },
+      "reasoning": {
+        "type": "string",
+        "description": "思考内容",
+        "options": ["follow", "off", "summary", "full"],
+        "labels": ["跟随预设", "不记录", "摘要", "完整"],
+        "default": "follow"
+      },
+      "reply": {
+        "type": "string",
+        "description": "回复内容",
+        "options": ["follow", "off", "summary", "full"],
+        "labels": ["跟随预设", "不记录", "摘要", "完整"],
+        "default": "follow"
+      },
+      "tool_calls": {
+        "type": "string",
+        "description": "工具流水",
+        "options": ["follow", "off", "summary", "full"],
+        "labels": ["跟随预设", "不记录", "摘要", "完整"],
+        "default": "follow"
+      },
+      "tool_results": {
+        "type": "string",
+        "description": "工具返回内容",
+        "options": ["follow", "on", "off"],
+        "labels": ["跟随预设", "记录", "不记录"],
+        "default": "follow"
+      },
+      "system_prompt": {
+        "type": "string",
+        "description": "系统提示词",
+        "options": ["follow", "off", "hash", "full"],
+        "labels": ["跟随预设", "不记录", "仅哈希", "完整"],
+        "hint": "人设正文由 personas 目录单独保存，这里记录的是最终拼接后的系统提示词。",
+        "default": "follow"
+      }
+    }
+  },
+  "limits": {
+    "type": "object",
+    "description": "文本截断上限",
+    "items": {
+      "summary_chars": {
+        "type": "int",
+        "description": "摘要模式字符数",
+        "default": 200,
+        "slider": {"min": 0, "max": 2000, "step": 50}
+      },
+      "max_prompt_chars": {
+        "type": "int",
+        "description": "用户输入上限",
+        "default": 8000,
+        "slider": {"min": 500, "max": 100000, "step": 500}
+      },
+      "max_reasoning_chars": {
+        "type": "int",
+        "description": "思考内容上限",
+        "default": 4000,
+        "slider": {"min": 500, "max": 100000, "step": 500}
+      },
+      "max_reply_chars": {
+        "type": "int",
+        "description": "回复内容上限",
+        "default": 8000,
+        "slider": {"min": 500, "max": 100000, "step": 500}
+      },
+      "max_tool_args_chars": {
+        "type": "int",
+        "description": "工具参数上限",
+        "default": 2000,
+        "slider": {"min": 200, "max": 50000, "step": 200}
+      },
+      "max_tool_result_chars": {
+        "type": "int",
+        "description": "工具结果上限",
+        "default": 2000,
+        "slider": {"min": 200, "max": 50000, "step": 200}
+      }
+    }
+  },
+  "media": {
+    "type": "object",
+    "description": "媒体备份",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "备份媒体文件",
+        "default": true
+      },
+      "store_bytes": {
+        "type": "bool",
+        "description": "保存文件本体",
+        "hint": "关闭后仅记录来源信息，不复制文件。",
+        "default": true
+      },
+      "capture_quoted": {
+        "type": "bool",
+        "description": "备份被引用消息中的媒体",
+        "default": false
+      },
+      "max_file_mb": {
+        "type": "int",
+        "description": "单文件大小上限（MB）",
+        "hint": "0 表示不限制。",
+        "default": 50,
+        "slider": {"min": 0, "max": 1024, "step": 10}
+      },
+      "download_timeout_seconds": {
+        "type": "int",
+        "description": "媒体下载超时（秒）",
+        "default": 20,
+        "slider": {"min": 5, "max": 300, "step": 5}
+      },
+      "categories": {
+        "type": "dict",
+        "description": "扩展名到分类目录的映射",
+        "hint": "格式为 {\"分类名\": [\"扩展名\", ...]}，会覆盖内置映射。留空使用内置分类。",
+        "default": {}
+      }
+    }
+  },
+  "persona": {
+    "type": "object",
+    "description": "人设备份",
+    "items": {
+      "enabled": {
+        "type": "bool",
+        "description": "备份当前会话人设",
+        "default": true
+      },
+      "daily": {
+        "type": "bool",
+        "description": "每日检查一次",
+        "default": true
+      },
+      "on_change": {
+        "type": "bool",
+        "description": "检测到改动时备份",
+        "default": true
+      },
+      "poll_minutes": {
+        "type": "int",
+        "description": "空闲会话轮询间隔（分钟）",
+        "hint": "0 表示关闭轮询。",
+        "default": 30,
+        "slider": {"min": 0, "max": 720, "step": 5}
+      }
+    }
+  },
+  "rotation": {
+    "type": "object",
+    "description": "换日规则",
+    "items": {
+      "day_boundary": {
+        "type": "string",
+        "description": "换日时间点",
+        "hint": "格式 HH:MM，默认 02:00。早于该时间仍记为前一天。",
+        "default": "02:00"
+      },
+      "idle_minutes": {
+        "type": "int",
+        "description": "切换所需的空闲分钟数",
+        "hint": "越过换日点且空闲达到该时长后，才切换到新目录。",
+        "default": 120,
+        "slider": {"min": 0, "max": 1440, "step": 10}
+      },
+      "mode": {
+        "type": "string",
+        "description": "换日生效方式",
+        "options": ["both", "lazy", "scheduled"],
+        "labels": ["写入时+定时", "仅写入时", "仅定时"],
+        "default": "both"
+      },
+      "check_interval_seconds": {
+        "type": "int",
+        "description": "定时检查间隔（秒）",
+        "default": 60,
+        "slider": {"min": 10, "max": 3600, "step": 10}
+      },
+      "precreate_next_day_folder": {
+        "type": "bool",
+        "description": "提前创建下一天目录",
+        "default": false
+      },
+      "max_turns_per_file": {
+        "type": "int",
+        "description": "单个文件最大轮次",
+        "hint": "超过后自动分卷；0 表示不限制。",
+        "default": 0,
+        "slider": {"min": 0, "max": 20000, "step": 100}
+      }
+    }
+  },
+  "storage": {
+    "type": "object",
+    "description": "存储",
+    "items": {
+      "compress_jsonl": {
+        "type": "bool",
+        "description": "压缩会话文件（gzip）",
+        "default": false
+      },
+      "retention_days": {
+        "type": "int",
+        "description": "保留天数",
+        "hint": "0 表示永久保留。",
+        "default": 0,
+        "slider": {"min": 0, "max": 3650, "step": 30}
+      }
+    }
+  },
+  "performance": {
+    "type": "object",
+    "description": "运行时行为",
+    "items": {
+      "turn_timeout_seconds": {
+        "type": "int",
+        "description": "单轮兜底超时（秒）",
+        "hint": "超过该时间仍未收到结束钩子时强制落盘。",
+        "default": 600,
+        "slider": {"min": 30, "max": 7200, "step": 30}
+      },
+      "media_wait_seconds": {
+        "type": "int",
+        "description": "落盘前等待媒体的秒数",
+        "default": 5,
+        "slider": {"min": 0, "max": 120, "step": 5}
+      }
+    }
+  },
+  "privacy": {
+    "type": "object",
+    "description": "隐私",
+    "items": {
+      "mask_patterns": {
+        "type": "list",
+        "description": "脱敏正则",
+        "hint": "命中的文本会在落盘前替换为 ***。",
+        "default": []
+      }
+    }
+  }
+}
