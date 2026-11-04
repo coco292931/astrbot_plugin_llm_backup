@@ -12,6 +12,14 @@ from .core.config import PluginConfig
 from .core.service import BackupService, event_umo
 
 PLUGIN_NAME = "astrbot_plugin_llm_backup"
+REQUIRED_HOOKS = (
+    "on_llm_request",
+    "on_agent_begin",
+    "on_using_llm_tool",
+    "on_llm_tool_respond",
+    "on_llm_response",
+    "on_agent_done",
+)
 
 
 def _hook(name: str):
@@ -25,11 +33,20 @@ def _hook(name: str):
         return lambda function: function
 
 
+def _astrbot_version() -> str:
+    try:
+        import astrbot
+
+        return str(getattr(astrbot, "__version__", "") or "")
+    except Exception:
+        return ""
+
+
 @register(
     PLUGIN_NAME,
     "coco",
     "按会话备份 LLM 往来流水、媒体与人设",
-    "1.0.0",
+    "1.1.0",
     "https://github.com/coco292931/astrbot_plugin_llm_backup",
 )
 class LlmBackupPlugin(Star):
@@ -42,7 +59,21 @@ class LlmBackupPlugin(Star):
 
     async def initialize(self) -> None:
         data_dir = Path(StarTools.get_data_dir(PLUGIN_NAME))
+        missing = [name for name in REQUIRED_HOOKS if not callable(getattr(filter, name, None))]
+        if missing:
+            self.logger.warning(
+                "[llm_backup] 当前 AstrBot 缺少钩子 %s，将改用回复后兜底落盘",
+                ", ".join(missing),
+            )
+        self.logger.info(
+            "[llm_backup] 详细度=%s 私聊=%s 群聊=%s 白名单=%d",
+            self._config.as_str("detail_level", "standard"),
+            self._config.as_bool("include_private", True),
+            self._config.as_bool("include_groups", False),
+            len(self._config.as_list("umos")),
+        )
         service = BackupService(self._config, data_dir, self.logger)
+        service.set_environment(version=_astrbot_version(), missing_hooks=missing)
         service.set_persona_resolver(self._resolve_persona)
         try:
             timezone = str(self.context.get_config().get("timezone") or "")
@@ -211,3 +242,13 @@ class LlmBackupPlugin(Star):
             yield event.plain_result("备份服务尚未就绪。")
             return
         yield event.plain_result(await service.doctor())
+
+    @filter.command("backup_debug")
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def backup_debug(self, event: AstrMessageEvent):
+        """查看当前会话是否会被记录以及最近的钩子判定。"""
+        service = self._service
+        if service is None:
+            yield event.plain_result("备份服务尚未就绪。")
+            return
+        yield event.plain_result(service.debug_text(event))

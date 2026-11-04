@@ -8,8 +8,10 @@ import json
 import logging
 import shutil
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -141,11 +143,16 @@ class BackupService:
         self._personas = PersonaStore(self._root, config, self._logger)
         self._active: dict[str, TurnState] = {}
         self._tasks: list[asyncio.Task[None]] = []
-        self._persona_resolver: Callable[[Any, str], tuple[str, Any]] | None = None
+        self._timers: dict[str, asyncio.Task[None]] = {}
+        self._decisions: deque[dict[str, Any]] = deque(maxlen=40)
+        self._warned: set[tuple[str, str]] = set()
+        self._persona_resolver: Callable[[Any, str], Awaitable[tuple[str, Any]]] | None = None
         self._tz: Any = None
         self._started = False
         self._stats = {"turns": 0, "errors": 0}
         self._last_error = ""
+        self._env_version = ""
+        self._missing_hooks: list[str] = []
         self._include_cron = config.as_bool("include_cron", False)
         self._include_webchat = config.as_bool("include_webchat", True)
         self._include_private = config.as_bool("include_private", True)
@@ -167,6 +174,20 @@ class BackupService:
         resolver: Callable[[Any, str], Awaitable[tuple[str, Any]]],
     ) -> None:
         self._persona_resolver = resolver
+
+    def set_environment(
+        self,
+        *,
+        version: str = "",
+        missing_hooks: list[str] | None = None,
+    ) -> None:
+        self._env_version = str(version or "")
+        self._missing_hooks = list(missing_hooks or [])
+        if self._missing_hooks:
+            self._logger.warning(
+                "[llm_backup] 当前 AstrBot 缺少钩子: %s，将使用回复后兜底落盘",
+                ", ".join(self._missing_hooks),
+            )
 
     def set_timezone(self, name: str) -> None:
         if not name:
@@ -206,6 +227,11 @@ class BackupService:
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+        for task in list(self._timers.values()):
+            task.cancel()
+        if self._timers:
+            await asyncio.gather(*self._timers.values(), return_exceptions=True)
+        self._timers.clear()
         for state in list(self._active.values()):
             await self._finalize(state, status="interrupted", note="plugin stopped")
         await asyncio.to_thread(self._rotation.save)
@@ -224,19 +250,24 @@ class BackupService:
         await self._writer.flush()
 
     async def handle_llm_request(self, event: Any, request: Any) -> None:
-        if not self._started or not self._config.enabled:
+        if not self._started:
+            self._note("llm_request", event, False, "service_not_started")
             return
         umo = event_umo(event)
-        if not umo or not self._should_record(event, umo):
+        allowed, reason = self._evaluate(event, umo)
+        if not allowed:
+            self._note("llm_request", event, False, reason)
             return
         key = self._base_key(event, umo)
         previous = self._active.pop(key, None)
         if previous is not None and self._is_empty_turn(previous):
             previous.finished = True
+            self._cancel_timer(previous)
             await self._await_media(previous)
         elif previous is not None:
             await self._finalize(previous, status="superseded")
         self._active[key] = await self._open_turn(event, umo, request, key)
+        self._note("llm_request", event, True, "opened")
 
     @staticmethod
     def _is_empty_turn(state: TurnState) -> bool:
@@ -248,7 +279,7 @@ class BackupService:
         )
 
     async def handle_agent_begin(self, event: Any, run_context: Any) -> None:
-        state = self._state_of(event)
+        state, _ = self._state_or_note("agent_begin", event)
         if state is None:
             return
         self._touch_state(state)
@@ -262,7 +293,7 @@ class BackupService:
         tool: Any,
         tool_args: Any,
     ) -> None:
-        state = self._state_of(event)
+        state, _ = self._state_or_note("using_llm_tool", event)
         if state is None or self._capture.level("tool_calls") == "off":
             return
         self._touch_state(state)
@@ -281,7 +312,7 @@ class BackupService:
         tool_args: Any,
         tool_result: Any,
     ) -> None:
-        state = self._state_of(event)
+        state, _ = self._state_or_note("llm_tool_respond", event)
         if state is None or self._capture.level("tool_calls") == "off":
             return
         self._touch_state(state)
@@ -307,7 +338,7 @@ class BackupService:
             )
 
     async def handle_llm_response(self, event: Any, response: Any) -> None:
-        state = self._state_of(event)
+        state, reason = self._state_or_note("llm_response", event)
         if state is None:
             return
         self._touch_state(state)
@@ -326,6 +357,7 @@ class BackupService:
         if str(getattr(response, "role", "")) == "err":
             state.status = "err"
             state.note = text or "llm error"
+        self._schedule_finalize(state)
 
     async def handle_agent_done(
         self,
@@ -333,7 +365,7 @@ class BackupService:
         run_context: Any,
         response: Any = None,
     ) -> None:
-        state = self._state_of(event)
+        state, _ = self._state_or_note("agent_done", event)
         if state is None:
             return
         if state.reply is None and response is not None:
@@ -395,6 +427,41 @@ class BackupService:
             lines.append(f"本会话今日记录: {data['turns_today']}")
         if data["last_error"]:
             lines.append(f"最近错误: {data['last_error']}")
+        lines.append("排查: /backup_debug")
+        return "\n".join(lines)
+
+    def debug_text(self, event: Any = None) -> str:
+        lines = [
+            f"备份目录: {self._root}",
+            f"服务状态: {'运行中' if self._started else '未启动'}",
+            f"AstrBot: {self._env_version or '未知版本'}",
+            f"缺失钩子: {', '.join(self._missing_hooks) or '无'}",
+            f"过滤模式: {self._filter_mode} / 白名单 {len(self._filter_umos)} 条 / 用户 {len(self._filter_senders)} 条",
+            f"开关: 私聊 {self._include_private} 群聊 {self._include_groups} "
+            f"cron {self._include_cron} 插件发起 {self._include_plugin}",
+            f"活动轮次: {len(self._active)} / 写队列: {self._writer.pending}",
+        ]
+        if event is not None:
+            umo = event_umo(event)
+            allowed, reason = self._evaluate(event, umo)
+            verdict = "记录" if allowed else f"跳过（{reason}）"
+            lines.extend(
+                [
+                    f"当前会话: {umo or '空'}",
+                    f"平台: {event_platform(event) or '未知'} / 私聊: {event_is_private(event)}",
+                    f"当前判定: {verdict}",
+                ]
+            )
+        if self._decisions:
+            lines.append("最近判定:")
+            for item in list(self._decisions)[-8:]:
+                flag = "OK" if item["ok"] else "SKIP"
+                detail = item.get("why") or ""
+                lines.append(
+                    f"  {item['t']} {item['stage']:<14} {flag:<4} {item['umo']} {detail}"
+                )
+        else:
+            lines.append("最近判定: 尚未收到任何 LLM 钩子")
         return "\n".join(lines)
 
     async def force_rotate(self, umo: str) -> str:
@@ -434,6 +501,8 @@ class BackupService:
             problems.append(f"当前为白名单模式，仅记录 {len(self._filter_umos)} 个会话")
         lines = [
             f"备份目录: {self._root}",
+            f"AstrBot: {self._env_version or '未知版本'}",
+            f"缺失钩子: {', '.join(self._missing_hooks) or '无'}",
             f"剩余空间: {'未知' if free_mb < 0 else f'{free_mb} MB'}",
             f"换日点: {self._rotation_cfg.day_boundary} / 空闲阈值: {self._rotation_cfg.idle_minutes} 分钟",
             f"详细度: {self._config.as_str('detail_level', 'standard')}",
@@ -497,6 +566,101 @@ class BackupService:
             return None
         return self._active.get(self._base_key(event, umo))
 
+    def _state_or_note(
+        self,
+        stage: str,
+        event: Any,
+    ) -> tuple[TurnState | None, str]:
+        state = self._state_of(event)
+        if state is None:
+            self._note(stage, event, False, "no_active_turn")
+            return None, "no_active_turn"
+        return state, ""
+
+    def _note(self, stage: str, event: Any, ok: bool, reason: str = "") -> None:
+        umo = event_umo(event) if event is not None else ""
+        if not ok:
+            key = (stage, reason)
+            if key not in self._warned:
+                self._warned.add(key)
+                self._logger.info(
+                    "[llm_backup] %s 跳过: %s (%s)，后续同类提示不再重复",
+                    stage,
+                    reason,
+                    umo or "空",
+                )
+        self._decisions.append(
+            {
+                "t": self._now().strftime("%H:%M:%S"),
+                "stage": stage,
+                "umo": umo,
+                "ok": ok,
+                "why": reason,
+            }
+        )
+
+    def _umo_matches(self, umo: str) -> bool:
+        for pattern in self._filter_umos:
+            if pattern == umo:
+                return True
+            if "*" in pattern and fnmatchcase(umo, pattern):
+                return True
+        return False
+
+    def _evaluate(self, event: Any, umo: str) -> tuple[bool, str]:
+        if not self._config.enabled:
+            return False, "plugin_disabled"
+        if not self._started:
+            return False, "service_not_started"
+        if not umo:
+            return False, "empty_umo"
+        platform = event_platform(event)
+        if platform == "cron" and not self._include_cron:
+            return False, "cron_filtered"
+        if platform == "webchat" and not self._include_webchat:
+            return False, "webchat_filtered"
+        private = event_is_private(event)
+        if private and not self._include_private:
+            return False, "private_disabled"
+        if not private and not self._include_groups:
+            return False, "group_disabled"
+        if (
+            _call(event, "get_extra", None, "provider_request") is not None
+            and not self._include_plugin
+        ):
+            return False, "plugin_initiated_filtered"
+        if self._filter_mode == "whitelist" and self._filter_umos:
+            if not self._umo_matches(umo):
+                return False, "umo_not_in_whitelist"
+        if self._filter_mode == "blacklist" and self._umo_matches(umo):
+            return False, "umo_in_blacklist"
+        if self._filter_senders and event_sender_id(event) not in self._filter_senders:
+            return False, "sender_not_in_list"
+        return True, ""
+
+    def _schedule_finalize(self, state: TurnState) -> None:
+        delay = self._performance.finalize_debounce_seconds
+        if delay <= 0 or state.finished:
+            return
+        self._cancel_timer(state)
+        self._timers[state.key] = asyncio.create_task(
+            self._delayed_finalize(state, delay)
+        )
+
+    def _cancel_timer(self, state: TurnState) -> None:
+        task = self._timers.pop(state.key, None)
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+
+    async def _delayed_finalize(self, state: TurnState, delay: int) -> None:
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        if state.finished:
+            return
+        await self._finalize(state, status="fallback", note="agent_done_missing")
+
     async def _finalize(
         self,
         state: TurnState,
@@ -506,6 +670,7 @@ class BackupService:
         if state.finished:
             return
         state.finished = True
+        self._cancel_timer(state)
         if status != "ok":
             state.status = status
         if note:
@@ -527,6 +692,13 @@ class BackupService:
         if self._active.get(state.key) is state:
             self._active.pop(state.key, None)
         await self._sessions.flush()
+        self._logger.info(
+            "[llm_backup] 写入 %s (status=%s, steps=%d, tools=%d)",
+            path,
+            state.status,
+            len(state.steps),
+            len(state.tool_calls),
+        )
 
     async def _await_media(self, state: TurnState) -> None:
         tasks = list(state.media_tasks)
@@ -626,31 +798,7 @@ class BackupService:
             record.media.append(ref)
 
     def _should_record(self, event: Any, umo: str) -> bool:
-        if not self._config.enabled:
-            return False
-        platform = event_platform(event)
-        if platform == "cron" and not self._include_cron:
-            return False
-        if platform == "webchat" and not self._include_webchat:
-            return False
-        private = event_is_private(event)
-        if private and not self._include_private:
-            return False
-        if not private and not self._include_groups:
-            return False
-        if (
-            _call(event, "get_extra", None, "provider_request") is not None
-            and not self._include_plugin
-        ):
-            return False
-        if self._filter_mode == "whitelist" and self._filter_umos:
-            if umo not in self._filter_umos:
-                return False
-        if self._filter_mode == "blacklist" and umo in self._filter_umos:
-            return False
-        if self._filter_senders and event_sender_id(event) not in self._filter_senders:
-            return False
-        return True
+        return self._evaluate(event, umo)[0]
 
     @staticmethod
     def _tool_names(request: Any) -> list[str]:
@@ -797,20 +945,19 @@ class BackupService:
             return
         try:
             persona_id, persona = await self._persona_resolver(event, umo)
+            if not persona:
+                return
+            await self._personas.capture(
+                persona_id,
+                persona,
+                now,
+                source="daily" if daily_due else "request",
+            )
+            if daily_due:
+                self._personas.mark_day(umo, day)
+            await self._personas.flush()
         except Exception as exc:
-            self._logger.debug("[llm_backup] 解析人设失败: %s", exc)
-            return
-        if not persona:
-            return
-        await self._personas.capture(
-            persona_id,
-            persona,
-            now,
-            source="daily" if daily_due else "request",
-        )
-        if daily_due:
-            self._personas.mark_day(umo, day)
-        await self._personas.flush()
+            self._logger.warning("[llm_backup] 人设快照失败: %s", exc)
 
     def _spawn(
         self,

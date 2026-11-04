@@ -140,6 +140,7 @@ class StorageConfig:
 class PerformanceConfig:
     turn_timeout_seconds: int = 600
     media_wait_seconds: int = 5
+    finalize_debounce_seconds: int = 20
 
 
 class PluginConfig:
@@ -275,6 +276,9 @@ class PluginConfig:
         return PerformanceConfig(
             turn_timeout_seconds=max(60, self.as_int("performance.turn_timeout_seconds", 600)),
             media_wait_seconds=max(0, self.as_int("performance.media_wait_seconds", 5)),
+            finalize_debounce_seconds=max(
+                0, self.as_int("performance.finalize_debounce_seconds", 20)
+            ),
         )
 
     def resolve_root(self, data_dir: Path) -> Path:

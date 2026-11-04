@@ -9,7 +9,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from core.config import PluginConfig
+import asyncio
+
+from core.config import PerformanceConfig, PluginConfig
 from core.service import BackupService
 from core.session_store import SessionStore
 
@@ -358,6 +360,64 @@ class ServiceFlowTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(days, ["2026-11-03", "2026-11-04"])
         self.assertEqual(service.status(umo)["day"], "2026-11-04")
+
+    async def test_debug_text_reports_filter_reason(self) -> None:
+        service = await self._start(
+            {"filter_mode": "whitelist", "umos": ["other:FriendMessage:1"]}
+        )
+        event = self._event()
+        text = service.debug_text(event)
+        self.assertIn("umo_not_in_whitelist", text)
+        self.assertIn("aiocqhttp:FriendMessage:10001", text)
+
+    async def test_debug_text_reports_opened_turn(self) -> None:
+        service = await self._start()
+        event = self._event()
+        await service.handle_llm_request(event, FakeRequest())
+        text = service.debug_text(event)
+        self.assertIn("opened", text)
+        self.assertIn("当前判定: 记录", text)
+
+    async def test_wildcard_umo_matches(self) -> None:
+        service = await self._start(
+            {"filter_mode": "whitelist", "umos": ["aiocqhttp:FriendMessage:*"]}
+        )
+        event = self._event()
+        await service.handle_llm_request(event, FakeRequest())
+        self.assertEqual(service.status()["active"], 1)
+
+    async def test_fallback_finalizes_without_agent_done(self) -> None:
+        service = await self._start()
+        service._performance = PerformanceConfig(finalize_debounce_seconds=0.05)
+        event = self._event()
+        await service.handle_llm_request(event, FakeRequest())
+        await service.handle_llm_response(
+            event, FakeResponse(reasoning="想", text="好的")
+        )
+        await asyncio.sleep(0.2)
+        await service._writer.flush()
+
+        records = self._records()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["st"], "fallback")
+        self.assertEqual(records[0]["note"], "agent_done_missing")
+        self.assertEqual(records[0]["out"]["t"], "好的")
+
+    async def test_agent_done_cancels_fallback_timer(self) -> None:
+        service = await self._start()
+        service._performance = PerformanceConfig(finalize_debounce_seconds=0.05)
+        event = self._event()
+        await service.handle_llm_request(event, FakeRequest())
+        await service.handle_llm_response(event, FakeResponse(text="好的"))
+        await service.handle_agent_done(
+            event, FakeRunContext([FakeMessage("system", "sys")]), None
+        )
+        await asyncio.sleep(0.2)
+        await service._writer.flush()
+
+        records = self._records()
+        self.assertEqual(len(records), 1)
+        self.assertNotEqual(records[0].get("st"), "fallback")
 
     async def test_doctor_reports_ok(self) -> None:
         service = await self._start()

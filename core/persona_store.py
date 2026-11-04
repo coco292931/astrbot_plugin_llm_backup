@@ -91,7 +91,7 @@ class PersonaStore:
             "prompt": str(persona.get("prompt") or ""),
             "tools": _normalize(persona.get("tools")),
             "skills": _normalize(persona.get("skills")),
-            "begin_dialogs": list(persona.get("begin_dialogs") or []),
+            "begin_dialogs": [str(item) for item in persona.get("begin_dialogs") or []],
             "error": str(persona.get("custom_error_message") or ""),
         }
         return hashlib.sha256(compact_json(payload).encode("utf-8")).hexdigest()
@@ -153,7 +153,9 @@ class PersonaStore:
         dialogs = persona.get("begin_dialogs") or []
         if dialogs:
             lines.extend(["", "## begin_dialogs"])
-            lines.extend(f"- {json.dumps(item, ensure_ascii=False)}" for item in dialogs)
+            lines.extend(
+                f"- {json.dumps(item, ensure_ascii=False, default=str)}" for item in dialogs
+            )
         error = persona.get("custom_error_message")
         if error:
             lines.extend(["", "## custom_error_message", str(error)])

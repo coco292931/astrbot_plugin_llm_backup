@@ -68,6 +68,7 @@
 | `/backup_now` | 管理员 | 立即把内存中的轮次落盘 |
 | `/backup_rotate` | 管理员 | 强制把当前会话切换到下一个逻辑日目录 |
 | `/backup_doctor` | 管理员 | 检查写权限、剩余空间与关键配置 |
+| `/backup_debug` | 管理员 | 查看当前会话是否会被记录、跳过原因，以及最近的钩子判定 |
 
 ## 配置说明
 
@@ -87,7 +88,7 @@ Windows 与 Linux 通用：路径分隔符、非法字符、保留名、长度�
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | `filter_mode` | `whitelist` | `whitelist` / `blacklist` / `all` |
-| `umos` | 空 | 会话来源。白名单为空表示不限制；黑名单表示排除 |
+| `umos` | 空 | 会话来源。白名单为空表示不限制；黑名单表示排除。支持 `*` 通配符，如 `aiocqhttp:FriendMessage:*` |
 | `senders` | 空 | 只备份这些用户，留空表示不限 |
 | `include_private` | 开 | 备份私聊 |
 | `include_groups` | 关 | 备份群聊 |
@@ -171,6 +172,7 @@ Windows 与 Linux 通用：路径分隔符、非法字符、保留名、长度�
 | --- | --- | --- |
 | `performance.turn_timeout_seconds` | 600 | 单轮无进展多久后强制落盘 |
 | `performance.media_wait_seconds` | 5 | 落盘前等待媒体复制的上限 |
+| `performance.finalize_debounce_seconds` | 20 | 收到回复后仍未结束时的兜底落盘延时，0 为关闭 |
 
 会话活动时间由真正触发 LLM 的消息更新，插件不会注册普通消息处理器，因此不影响 AstrBot 原有的唤醒判定。
 
@@ -197,7 +199,7 @@ Windows 与 Linux 通用：路径分隔符、非法字符、保留名、长度�
 
 媒体统一写为相对备份根目录的 POSIX 路径，例如 `files/图片/2026-11-03/cat__a1b2c3d4.png`。
 
-`st` 取值：`degraded`（上下文被压缩，中间步骤可能缺失）、`err`（模型返回错误）、`superseded`（同一事件发起了新的请求）、`timeout`（超时兜底）、`manual`（手动落盘）、`interrupted`（进程重启）。
+| `st` 取值：`degraded`（上下文被压缩，中间步骤可能缺失）、`err`（模型返回错误）、`superseded`（同一事件发起了新的请求）、`fallback`（未收到结束钩子，按回复兜底落盘）、`timeout`（超时兜底）、`manual`（手动落盘）、`interrupted`（进程重启）。
 
 `_session.json` 保存会话元信息：
 
@@ -232,6 +234,28 @@ Windows 与 Linux 通用：路径分隔符、非法字符、保留名、长度�
 - 子代理对话不记录
 - 人设改动在请求时或轮询时被发现，不是实时事件
 - 平台提供的临时媒体链接可能过期，复制失败会记录为 `media_error`
+
+## 排查：没有生成文件
+
+先发一条会触发 LLM 的消息，再执行 `/backup_debug`。它会显示当前事件的 UMO、平台、是否私聊、本次判定结果，以及最近若干次钩子判定。
+
+| 判定 | 含义 | 处理 |
+| --- | --- | --- |
+| `opened` | 已开启一轮记录 | 正常，回复结束后会写入 |
+| `service_not_started` | 插件初始化未完成 | 查看日志中 `[llm_backup]` 开头的报错并修复配置后重载 |
+| `plugin_disabled` | `enabled` 为关 | 打开总开关 |
+| `umo_not_in_whitelist` | UMO 与白名单不匹配 | 复制 `/backup_debug` 显示的 UMO 到 `umos`，或改用通配符 |
+| `umo_in_blacklist` | 命中黑名单 | 从 `umos` 中移除 |
+| `group_disabled` | 群聊未开启 | 打开 `include_groups` |
+| `private_disabled` | 私聊未开启 | 打开 `include_private` |
+| `cron_filtered` | 定时任务触发的对话 | 需要时打开 `include_cron` |
+| `plugin_initiated_filtered` | 其他插件主动发起的请求 | 需要时打开 `include_plugin_initiated` |
+| `sender_not_in_list` | 发送者不在 `senders` 中 | 清空或补充该用户 |
+| `no_active_turn` | 结束钩子没找到对应轮次 | 说明开启阶段被过滤，按上一条判定排查 |
+
+日志中同一条 `[llm_backup] <钩子> 跳过: <原因>` 只会出现一次；每写入一条记录会输出 `[llm_backup] 写入 <路径>`。
+
+如果 AstrBot 版本缺少 `on_agent_done`，插件会在回复后 `finalize_debounce_seconds` 秒兜底落盘，记录标记为 `st: fallback`；`/backup_doctor` 会显示缺失的钩子。
 
 ## 测试
 

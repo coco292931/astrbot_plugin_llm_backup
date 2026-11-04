@@ -145,6 +145,14 @@ class SchemaTests(unittest.TestCase):
         self.assertIn("astrbot_plugin_llm_backup", text)
         self.assertIn("version:", text)
 
+    def test_metadata_version_matches_entry_point(self) -> None:
+        import re
+
+        text = (ROOT / "metadata.yaml").read_text(encoding="utf-8")
+        metadata_version = re.search(r'^version:\s*"([^"]+)"', text, re.M).group(1)
+        main_source = (ROOT / "main.py").read_text(encoding="utf-8")
+        self.assertIn(f'"{metadata_version}"', main_source)
+
 
 if __name__ == "__main__":
     unittest.main()
