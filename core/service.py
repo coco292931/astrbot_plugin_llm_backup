@@ -48,6 +48,8 @@ _TOOL_MEDIA_KINDS = {
     "file": "file",
 }
 
+PLUGIN_INITIATED_EXTRA = "_llm_backup_plugin_initiated"
+
 
 def _call(target: Any, name: str, default: Any = None, *args: Any) -> Any:
     method = getattr(target, name, None)
@@ -249,6 +251,22 @@ class BackupService:
         await asyncio.to_thread(self._rotation.save)
         await self._writer.flush()
 
+    def handle_waiting_request(self, event: Any) -> None:
+        """在框架构建请求之前记下来源：此时已有的 provider_request 来自插件。
+
+        构建完成后 AstrBot 也会写入 provider_request，因此只能在等待阶段区分。
+        """
+        if not self._started:
+            return
+        if _call(event, "get_extra", None, "provider_request") is None:
+            return
+        setter = getattr(event, "set_extra", None)
+        if callable(setter):
+            try:
+                setter(PLUGIN_INITIATED_EXTRA, True)
+            except Exception:
+                pass
+
     async def handle_llm_request(self, event: Any, request: Any) -> None:
         if not self._started:
             self._note("llm_request", event, False, "service_not_started")
@@ -445,10 +463,12 @@ class BackupService:
             umo = event_umo(event)
             allowed, reason = self._evaluate(event, umo)
             verdict = "记录" if allowed else f"跳过（{reason}）"
+            origin = self._origin(event)
             lines.extend(
                 [
                     f"当前会话: {umo or '空'}",
                     f"平台: {event_platform(event) or '未知'} / 私聊: {event_is_private(event)}",
+                    f"来源判定: {'插件发起' if origin == 'plugin' else origin}",
                     f"当前判定: {verdict}",
                 ]
             )
@@ -625,7 +645,7 @@ class BackupService:
         if not private and not self._include_groups:
             return False, "group_disabled"
         if (
-            _call(event, "get_extra", None, "provider_request") is not None
+            _call(event, "get_extra", None, PLUGIN_INITIATED_EXTRA) is not None
             and not self._include_plugin
         ):
             return False, "plugin_initiated_filtered"
@@ -823,7 +843,7 @@ class BackupService:
     def _origin(self, event: Any) -> str:
         if event_platform(event) == "cron":
             return "cron"
-        if _call(event, "get_extra", None, "provider_request") is not None:
+        if _call(event, "get_extra", None, PLUGIN_INITIATED_EXTRA) is not None:
             return "plugin"
         return "user"
 

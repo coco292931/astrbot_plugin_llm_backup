@@ -13,6 +13,7 @@ from .core.service import BackupService, event_umo
 
 PLUGIN_NAME = "astrbot_plugin_llm_backup"
 REQUIRED_HOOKS = (
+    "on_waiting_llm_request",
     "on_llm_request",
     "on_agent_begin",
     "on_using_llm_tool",
@@ -46,7 +47,7 @@ def _astrbot_version() -> str:
     PLUGIN_NAME,
     "coco",
     "按会话备份 LLM 往来流水、媒体与人设",
-    "1.1.0",
+    "1.1.1",
     "https://github.com/coco292931/astrbot_plugin_llm_backup",
 )
 class LlmBackupPlugin(Star):
@@ -149,6 +150,13 @@ class LlmBackupPlugin(Star):
             await getattr(service, method)(*args)
         except Exception:
             self.logger.exception("[llm_backup] %s 处理失败", name)
+
+    @_hook("on_waiting_llm_request")
+    async def on_waiting_llm_request(self, event: AstrMessageEvent) -> None:
+        """在框架构建请求前区分插件发起的调用。"""
+        service = self._service
+        if service is not None:
+            service.handle_waiting_request(event)
 
     @_hook("on_llm_request")
     async def on_llm_request(self, event: AstrMessageEvent, request: Any) -> None:

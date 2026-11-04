@@ -419,6 +419,53 @@ class ServiceFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(records), 1)
         self.assertNotEqual(records[0].get("st"), "fallback")
 
+    async def test_normal_turn_with_provider_request_extra_is_recorded(self) -> None:
+        """AstrBot 4.22+ 在正常路径也会写入 provider_request，不能据此判定为插件发起。"""
+        service = await self._start()
+        event = self._event()
+        event.set_extra("provider_request", FakeRequest())
+        await service.handle_llm_request(event, FakeRequest())
+        await service.handle_agent_done(
+            event, FakeRunContext([FakeMessage("system", "sys")]), None
+        )
+        await service._writer.flush()
+
+        records = self._records()
+        self.assertEqual(len(records), 1)
+        self.assertNotIn("src", records[0])
+
+    async def test_plugin_initiated_detected_at_waiting_stage(self) -> None:
+        service = await self._start()
+        event = self._event()
+        event.set_extra("provider_request", FakeRequest())
+        service.handle_waiting_request(event)
+        await service.handle_llm_request(event, FakeRequest())
+        self.assertEqual(service.status()["active"], 0)
+        self.assertIn("plugin_initiated_filtered", service.debug_text(event))
+
+    async def test_plugin_initiated_recorded_when_enabled(self) -> None:
+        service = await self._start({"include_plugin_initiated": True})
+        event = self._event()
+        event.set_extra("provider_request", FakeRequest())
+        service.handle_waiting_request(event)
+        await service.handle_llm_request(event, FakeRequest())
+        await service.handle_agent_done(
+            event, FakeRunContext([FakeMessage("system", "sys")]), None
+        )
+        await service._writer.flush()
+
+        records = self._records()
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["src"], "plugin")
+
+    async def test_waiting_stage_does_not_mark_normal_turn(self) -> None:
+        service = await self._start()
+        event = self._event()
+        service.handle_waiting_request(event)
+        event.set_extra("provider_request", FakeRequest())
+        await service.handle_llm_request(event, FakeRequest())
+        self.assertEqual(service.status()["active"], 1)
+
     async def test_doctor_reports_ok(self) -> None:
         service = await self._start()
         text = await service.doctor()

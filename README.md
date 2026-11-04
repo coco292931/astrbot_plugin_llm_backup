@@ -14,6 +14,7 @@
 
 | 钩子 | 用途 |
 | --- | --- |
+| `on_waiting_llm_request` | 在框架构建请求前判断本次调用是否由其他插件发起 |
 | `on_llm_request` | 开启一轮记录，抓取用户输入、模型、对话、系统提示词 |
 | `on_agent_begin` | 记录 Agent 上下文的起始位置 |
 | `on_using_llm_tool` / `on_llm_tool_respond` | 记录工具名、参数、结果、耗时，并从 `send_message_to_user` 提取媒体 |
@@ -94,7 +95,7 @@ Windows 与 Linux 通用：路径分隔符、非法字符、保留名、长度�
 | `include_groups` | 关 | 备份群聊 |
 | `include_webchat` | 开 | 备份 WebChat |
 | `include_cron` | 关 | 备份定时任务触发的对话 |
-| `include_plugin_initiated` | 关 | 备份其他插件主动发起的请求 |
+| `include_plugin_initiated` | 关 | 备份其他插件通过 `yield event.request_llm()` 主动发起的请求 |
 
 ### 内容详细度
 
@@ -249,7 +250,7 @@ Windows 与 Linux 通用：路径分隔符、非法字符、保留名、长度�
 | `group_disabled` | 群聊未开启 | 打开 `include_groups` |
 | `private_disabled` | 私聊未开启 | 打开 `include_private` |
 | `cron_filtered` | 定时任务触发的对话 | 需要时打开 `include_cron` |
-| `plugin_initiated_filtered` | 其他插件主动发起的请求 | 需要时打开 `include_plugin_initiated` |
+| `plugin_initiated_filtered` | 该轮由其他插件 `yield event.request_llm()` 发起 | 需要时打开 `include_plugin_initiated` |
 | `sender_not_in_list` | 发送者不在 `senders` 中 | 清空或补充该用户 |
 | `no_active_turn` | 结束钩子没找到对应轮次 | 说明开启阶段被过滤，按上一条判定排查 |
 

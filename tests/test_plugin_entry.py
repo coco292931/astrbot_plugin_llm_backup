@@ -40,6 +40,7 @@ def _decorator(name: str):
 def _install_stubs() -> None:
     filter_module = types.ModuleType("astrbot.api.event.filter")
     for hook in (
+        "on_waiting_llm_request",
         "on_llm_request",
         "on_agent_begin",
         "on_using_llm_tool",
@@ -157,6 +158,7 @@ class EntryPointTests(unittest.TestCase):
 
     def test_all_hooks_are_registered(self) -> None:
         for hook in (
+            "on_waiting_llm_request",
             "on_llm_request",
             "on_agent_begin",
             "on_using_llm_tool",

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.1
+
+### 修复
+
+- 修复所有正常对话都被判定为「插件发起」而不落盘的问题。AstrBot 在正常构建路径末尾同样会写入 `provider_request`，原先在 `on_llm_request` 中检查该字段恒为真；现在改为在 `on_waiting_llm_request` 阶段（框架构建请求之前）判断该字段是否已存在，只有此时已存在才视为插件发起
+- `include_plugin_initiated` 的判定与文档同步修正
+- `/backup_debug` 增加来源判定一行，便于确认当前轮次的来源
+
 ## 1.1.0
 
 排查能力与兜底落盘。
