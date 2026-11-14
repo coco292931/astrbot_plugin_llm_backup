@@ -152,6 +152,7 @@ class FakeRequest:
         func_tool: Any = None,
         image_urls: list[str] | None = None,
         audio_urls: list[str] | None = None,
+        extra_user_content_parts: list[Any] | None = None,
     ) -> None:
         self.prompt = prompt
         self.contexts = contexts or []
@@ -161,6 +162,7 @@ class FakeRequest:
         self.func_tool = func_tool
         self.image_urls = image_urls or []
         self.audio_urls = audio_urls or []
+        self.extra_user_content_parts = extra_user_content_parts or []
 
 
 class FakePart:
@@ -168,6 +170,13 @@ class FakePart:
         self.type = kind
         for key, value in fields.items():
             setattr(self, key, value)
+
+    def model_dump_for_context(self) -> dict:
+        data = {"type": self.type}
+        for key, value in self.__dict__.items():
+            if key != "type":
+                data[key] = value
+        return data
 
 
 class FakeMessage:

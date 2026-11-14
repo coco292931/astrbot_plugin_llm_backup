@@ -120,6 +120,14 @@
         "labels": ["跟随预设", "记录", "不记录"],
         "default": "follow"
       },
+      "extra_parts": {
+        "type": "string",
+        "description": "注入内容块",
+        "options": ["off", "stripped", "full"],
+        "labels": ["不记录", "去掉系统提醒", "原样记录"],
+        "hint": "AstrBot 会把时间提醒、被引用消息等作为额外内容块附加在用户消息里。默认记录这些内容但剔除 <system_reminder> 块。",
+        "default": "stripped"
+      },
       "system_prompt": {
         "type": "string",
         "description": "系统提示词",

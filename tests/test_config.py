@@ -60,6 +60,26 @@ class CaptureRenderTests(unittest.TestCase):
         capture = CaptureSettings(reasoning="off")
         self.assertEqual(capture.render("reasoning", "内容"), "")
 
+    def test_extra_stripped_by_default(self) -> None:
+        capture = CaptureSettings()
+        text = "问一句\n<system_reminder>now</system_reminder>"
+        self.assertEqual(capture.extra(text), "问一句")
+
+    def test_extra_off_returns_empty(self) -> None:
+        capture = CaptureSettings(extra_parts="off")
+        self.assertEqual(capture.extra("任意内容"), "")
+
+    def test_extra_full_keeps_reminder(self) -> None:
+        capture = CaptureSettings(extra_parts="full")
+        text = "<system_reminder>now</system_reminder>"
+        self.assertEqual(capture.extra(text), text)
+
+    def test_extra_reminder_only_is_dropped(self) -> None:
+        capture = CaptureSettings()
+        self.assertEqual(
+            capture.extra("<system_reminder>now</system_reminder>"), ""
+        )
+
     def test_mask_patterns(self) -> None:
         capture = CaptureSettings(mask_patterns=(r"\d{11}",))
         self.assertEqual(capture.render("reply", "电话 13800000000"), "电话 ***")
@@ -67,6 +87,19 @@ class CaptureRenderTests(unittest.TestCase):
     def test_invalid_regex_is_ignored(self) -> None:
         capture = CaptureSettings(mask_patterns=("(",))
         self.assertEqual(capture.render("reply", "abc"), "abc")
+
+
+class PluginConfigExtraTests(unittest.TestCase):
+    def test_default_is_stripped(self) -> None:
+        self.assertEqual(PluginConfig({}).capture_settings().extra_parts, "stripped")
+
+    def test_invalid_falls_back_to_stripped(self) -> None:
+        config = PluginConfig({"capture": {"extra_parts": "nonsense"}})
+        self.assertEqual(config.capture_settings().extra_parts, "stripped")
+
+    def test_explicit_full(self) -> None:
+        config = PluginConfig({"capture": {"extra_parts": "full"}})
+        self.assertEqual(config.capture_settings().extra_parts, "full")
 
 
 class ReaderTests(unittest.TestCase):

@@ -10,11 +10,13 @@ from core.textutil import (
     brief_source,
     chain_plain_text,
     component_kind,
+    extract_text_parts,
     json_safe,
     media_display_name,
     media_kind,
     media_source,
     split_message_content,
+    strip_system_reminder,
     tool_result_text,
     truncate_text,
 )
@@ -206,6 +208,66 @@ class TextHelperTests(unittest.TestCase):
     def test_brief_source_hides_payload(self) -> None:
         self.assertEqual(brief_source("base64://" + "A" * 100), "base64://<100 chars>")
         self.assertIn("https://example.com", brief_source("https://example.com/x"))
+
+
+class ExtraPartsTests(unittest.TestCase):
+    def test_object_parts_use_model_dump(self) -> None:
+        class Part:
+            def __init__(self, text: str) -> None:
+                self.text = text
+
+            def model_dump_for_context(self) -> dict:
+                return {"type": "text", "text": self.text}
+
+        chunks = extract_text_parts([Part("甲"), Part("乙")])
+        self.assertEqual(chunks, ["甲", "乙"])
+
+    def test_dict_parts_and_non_text_are_skipped(self) -> None:
+        chunks = extract_text_parts(
+            [
+                {"type": "text", "text": "正文"},
+                {"type": "image_url", "image_url": {"url": "data:x"}},
+                {"type": "text", "text": "   "},
+            ]
+        )
+        self.assertEqual(chunks, ["正文"])
+
+    def test_bare_object_without_dump(self) -> None:
+        chunks = extract_text_parts([FakePart("text", text="直接文本")])
+        self.assertEqual(chunks, ["直接文本"])
+
+    def test_empty_input(self) -> None:
+        self.assertEqual(extract_text_parts(None), [])
+        self.assertEqual(extract_text_parts([]), [])
+
+
+class StripReminderTests(unittest.TestCase):
+    def test_removes_only_reminder(self) -> None:
+        text = (
+            "不是汪，是解个数和行列式\n"
+            "<system_reminder>Current datetime: 2026-11-15 03:37 (CST), "
+            "Weekday: Sunday</system_reminder>"
+        )
+        self.assertEqual(strip_system_reminder(text), "不是汪，是解个数和行列式")
+
+    def test_reminder_only_becomes_empty(self) -> None:
+        self.assertEqual(
+            strip_system_reminder("<system_reminder>a\nb</system_reminder>"), ""
+        )
+
+    def test_keeps_quoted_block(self) -> None:
+        text = (
+            "<system_reminder>t</system_reminder>\n"
+            "<Quoted Message>\n原文\n</Quoted Message>"
+        )
+        self.assertEqual(strip_system_reminder(text), "<Quoted Message>\n原文\n</Quoted Message>")
+
+    def test_collapses_blank_lines(self) -> None:
+        text = "a\n\n\n\n<system_reminder>x</system_reminder>\n\n\n\nb"
+        self.assertEqual(strip_system_reminder(text), "a\n\nb")
+
+    def test_untouched_without_reminder(self) -> None:
+        self.assertEqual(strip_system_reminder("纯文本"), "纯文本")
 
 
 if __name__ == "__main__":

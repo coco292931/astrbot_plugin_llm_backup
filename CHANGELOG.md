@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.0
+
+### 新增
+
+- 记录 AstrBot 附加在用户消息中的额外内容块（`req.extra_user_content_parts`），写入 `in.x`
+- 新增 `capture.extra_parts`：`off` / `stripped`（默认）/ `full`。默认剔除 `<system_reminder>…</system_reminder>` 块，因此时间提醒不会污染记录，而被引用消息的原文得以保留
+- 与用户原文重复的内容块会被自动跳过
+
+### 说明
+
+- 此前该字段完全未读取，导致 `<system_reminder>` 与被引用消息原文都未落盘；本版本默认行为对此类输入保持不变（仅含提醒时仍不产生额外字段）
+
 ## 1.1.1
 
 ### 修复

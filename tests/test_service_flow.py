@@ -466,6 +466,92 @@ class ServiceFlowTests(unittest.IsolatedAsyncioTestCase):
         await service.handle_llm_request(event, FakeRequest())
         self.assertEqual(service.status()["active"], 1)
 
+    async def test_reminder_only_is_dropped(self) -> None:
+        service = await self._start()
+        event = self._event()
+        reminder = "<system_reminder>Current datetime: 2026-11-15 03:37 (CST), Weekday: Sunday</system_reminder>"
+        request = FakeRequest(
+            prompt="你好",
+            extra_user_content_parts=[FakePart("text", text=reminder)],
+        )
+        await service.handle_llm_request(event, request)
+        await service.handle_agent_done(
+            event, FakeRunContext([FakeMessage("system", "sys")]), None
+        )
+        await service._writer.flush()
+
+        inbound = self._records()[0]["in"]
+        self.assertEqual(inbound["t"], "你好")
+        self.assertNotIn("x", inbound)
+
+    async def test_quoted_text_is_recorded_without_reminder(self) -> None:
+        service = await self._start()
+        event = self._event()
+        request = FakeRequest(
+            prompt="你好",
+            extra_user_content_parts=[
+                FakePart("text", text="<system_reminder>now</system_reminder>"),
+                FakePart("text", text="<Quoted Message>\n上一句\n</Quoted Message>"),
+            ],
+        )
+        await service.handle_llm_request(event, request)
+        await service.handle_agent_done(
+            event, FakeRunContext([FakeMessage("system", "sys")]), None
+        )
+        await service._writer.flush()
+
+        inbound = self._records()[0]["in"]
+        self.assertEqual(inbound["x"], "<Quoted Message>\n上一句\n</Quoted Message>")
+
+    async def test_extra_parts_full_keeps_reminder(self) -> None:
+        service = await self._start({"capture": {"extra_parts": "full"}})
+        event = self._event()
+        reminder = "<system_reminder>now</system_reminder>"
+        request = FakeRequest(
+            prompt="你好",
+            extra_user_content_parts=[FakePart("text", text=reminder)],
+        )
+        await service.handle_llm_request(event, request)
+        await service.handle_agent_done(
+            event, FakeRunContext([FakeMessage("system", "sys")]), None
+        )
+        await service._writer.flush()
+
+        self.assertEqual(self._records()[0]["in"]["x"], reminder)
+
+    async def test_extra_parts_off_records_nothing(self) -> None:
+        service = await self._start({"capture": {"extra_parts": "off"}})
+        event = self._event()
+        request = FakeRequest(
+            prompt="你好",
+            extra_user_content_parts=[FakePart("text", text="<Quoted Message>x</Quoted Message>")],
+        )
+        await service.handle_llm_request(event, request)
+        await service.handle_agent_done(
+            event, FakeRunContext([FakeMessage("system", "sys")]), None
+        )
+        await service._writer.flush()
+
+        self.assertNotIn("x", self._records()[0]["in"])
+
+    async def test_duplicate_extra_parts_are_skipped(self) -> None:
+        service = await self._start()
+        event = self._event()
+        request = FakeRequest(
+            prompt="你好",
+            extra_user_content_parts=[
+                FakePart("text", text="你好"),
+                FakePart("text", text="补充说明"),
+            ],
+        )
+        await service.handle_llm_request(event, request)
+        await service.handle_agent_done(
+            event, FakeRunContext([FakeMessage("system", "sys")]), None
+        )
+        await service._writer.flush()
+
+        self.assertEqual(self._records()[0]["in"]["x"], "补充说明")
+
     async def test_doctor_reports_ok(self) -> None:
         service = await self._start()
         text = await service.doctor()

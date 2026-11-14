@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from .textutil import truncate_text
+from .textutil import strip_system_reminder, truncate_text
 
 DETAIL_PRESETS: dict[str, dict[str, Any]] = {
     "minimal": {
@@ -41,6 +41,7 @@ DETAIL_PRESETS: dict[str, dict[str, Any]] = {
 
 _LEVELS = {"off", "summary", "full"}
 _PROMPT_LEVELS = {"off", "hash", "full"}
+_EXTRA_LEVELS = {"off", "stripped", "full"}
 _FULL_LIMITS = {
     "user_input": "max_prompt_chars",
     "reasoning": "max_reasoning_chars",
@@ -66,6 +67,7 @@ class CaptureSettings:
     tool_calls: str = "summary"
     tool_results: bool = False
     system_prompt: str = "hash"
+    extra_parts: str = "stripped"
     summary_chars: int = 200
     max_prompt_chars: int = 8000
     max_reasoning_chars: int = 4000
@@ -101,6 +103,18 @@ class CaptureSettings:
             if compiled is not None:
                 value = compiled.sub("***", value)
         return value
+
+    def extra(self, text: str | None) -> str:
+        """渲染注入内容块：off 丢弃，stripped 去掉 system_reminder，full 原样保留。"""
+        if not text:
+            return ""
+        mode = self.extra_parts if self.extra_parts in _EXTRA_LEVELS else "stripped"
+        if mode == "off":
+            return ""
+        value = strip_system_reminder(text) if mode == "stripped" else str(text)
+        if not value.strip():
+            return ""
+        return self.render("user_input", value)
 
 
 @dataclass(frozen=True)
@@ -215,6 +229,8 @@ class PluginConfig:
         else:
             tool_results = bool(preset["tool_results"])
 
+        extra_raw = self.as_str("capture.extra_parts", "stripped").strip().lower()
+
         return CaptureSettings(
             user_input=pick("user_input"),
             reasoning=pick("reasoning"),
@@ -222,6 +238,11 @@ class PluginConfig:
             tool_calls=pick("tool_calls"),
             tool_results=tool_results,
             system_prompt=pick("system_prompt"),
+            extra_parts=(
+                extra_raw
+                if extra_raw in _EXTRA_LEVELS
+                else "stripped"
+            ),
             summary_chars=self.as_int("limits.summary_chars", 200),
             max_prompt_chars=self.as_int("limits.max_prompt_chars", 8000),
             max_reasoning_chars=self.as_int("limits.max_reasoning_chars", 4000),

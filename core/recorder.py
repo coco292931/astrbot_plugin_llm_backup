@@ -39,6 +39,7 @@ class TurnState:
     group_id: str = ""
     user_text: str = ""
     prompt: str = ""
+    extra_text: str = ""
     input_media: list[dict[str, Any]] = field(default_factory=list)
     model: str = ""
     context_count: int = 0
@@ -211,6 +212,9 @@ def build_turn_record(
         prompt = capture.render("user_input", state.prompt)
         if prompt:
             inbound["p"] = prompt
+    extra = capture.extra(state.extra_text)
+    if extra:
+        inbound["x"] = extra
     paths = media_paths(state.input_media)
     if paths:
         inbound["m"] = paths

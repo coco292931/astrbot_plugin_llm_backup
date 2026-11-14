@@ -32,6 +32,7 @@ from .session_store import SessionStore
 from .textutil import (
     chain_plain_text,
     component_kind,
+    extract_text_parts,
     format_time,
     json_safe,
     media_display_name,
@@ -551,6 +552,7 @@ class BackupService:
         state.group_id = event_group_id(event)
         state.user_text = event_text(event)
         state.prompt = str(getattr(request, "prompt", "") or "")
+        state.extra_text = self._extra_text(state, request)
 
         conversation = getattr(request, "conversation", None)
         cid = str(getattr(conversation, "cid", "") or "")
@@ -830,6 +832,15 @@ class BackupService:
             return [str(name) for name in names()]
         except Exception:
             return []
+
+    @staticmethod
+    def _extra_text(state: TurnState, request: Any) -> str:
+        """收集注入内容块，跳过与用户原文重复的片段。"""
+        chunks = extract_text_parts(getattr(request, "extra_user_content_parts", None))
+        if not chunks:
+            return ""
+        known = {state.user_text.strip(), state.prompt.strip()} - {""}
+        return "\n".join(chunk for chunk in chunks if chunk.strip() not in known)
 
     @staticmethod
     def _pending_tool(state: TurnState, name: str) -> ToolCallRecord | None:

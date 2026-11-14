@@ -47,7 +47,7 @@ def _astrbot_version() -> str:
     PLUGIN_NAME,
     "coco",
     "按会话备份 LLM 往来流水、媒体与人设",
-    "1.1.1",
+    "1.2.0",
     "https://github.com/coco292931/astrbot_plugin_llm_backup",
 )
 class LlmBackupPlugin(Star):

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,9 @@ from urllib.parse import unquote
 from urllib.parse import urlparse
 
 from .paths import extension_of, file_uri_to_path, is_file_uri
+
+_REMINDER_RE = re.compile(r"<system_reminder>.*?</system_reminder>", re.DOTALL)
+_BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 _MEDIA_KINDS = {
     "Image": "image",
@@ -143,6 +147,40 @@ def tool_result_text(result: Any) -> str:
         text = getattr(item, "text", None)
         parts.append(text if isinstance(text, str) else f"[{type(item).__name__}]")
     return "\n".join(parts)
+
+
+def extract_text_parts(parts: Any) -> list[str]:
+    """从 ProviderRequest.extra_user_content_parts 中取出文本块。"""
+    chunks: list[str] = []
+    for part in parts or []:
+        data: Any = part
+        if not isinstance(part, Mapping):
+            dumper = getattr(part, "model_dump_for_context", None)
+            if callable(dumper):
+                try:
+                    data = dumper()
+                except Exception:
+                    data = None
+            if not isinstance(data, Mapping):
+                text = getattr(part, "text", None)
+                if isinstance(text, str) and text.strip():
+                    chunks.append(text)
+                continue
+        kind = data.get("type")
+        if kind not in (None, "text"):
+            continue
+        text = data.get("text")
+        if isinstance(text, str) and text.strip():
+            chunks.append(text)
+    return chunks
+
+
+def strip_system_reminder(text: str) -> str:
+    """移除 AstrBot 注入的 <system_reminder> 块，保留其余内容。"""
+    if not text:
+        return ""
+    value = _REMINDER_RE.sub("", text)
+    return _BLANK_LINES_RE.sub("\n\n", value).strip()
 
 
 def truncate_text(text: str | None, limit: int) -> str:
