@@ -128,6 +128,12 @@
         "hint": "AstrBot 会把时间提醒、被引用消息等作为额外内容块附加在用户消息里。默认记录这些内容但剔除 <system_reminder> 块。",
         "default": "stripped"
       },
+      "tagged_blocks": {
+        "type": "list",
+        "description": "额外捕获的标签块",
+        "hint": "以 <Tag>…</Tag> 包裹的内容（如 Mnemosyne 记忆）会被单独记录到 in.x，即使它出现在系统提示词或上下文里、且对应字段未完整记录。留空表示关闭。",
+        "default": ["Mnemosyne"]
+      },
       "system_prompt": {
         "type": "string",
         "description": "系统提示词",

@@ -10,6 +10,8 @@ from core.textutil import (
     brief_source,
     chain_plain_text,
     component_kind,
+    context_texts,
+    extract_tagged_blocks,
     extract_text_parts,
     json_safe,
     media_display_name,
@@ -268,6 +270,51 @@ class StripReminderTests(unittest.TestCase):
 
     def test_untouched_without_reminder(self) -> None:
         self.assertEqual(strip_system_reminder("纯文本"), "纯文本")
+
+
+class TaggedBlockTests(unittest.TestCase):
+    BLOCK = "<Mnemosyne> 长期记忆片段：\n- [2026-11-01 10:00] 用户喜欢猫\n</Mnemosyne>"
+
+    def test_extracts_single_block(self) -> None:
+        text = f"前缀\n{self.BLOCK}\n后缀"
+        self.assertEqual(extract_tagged_blocks(text, ("Mnemosyne",)), [self.BLOCK])
+
+    def test_extracts_multiple_blocks(self) -> None:
+        text = f"{self.BLOCK}\n{self.BLOCK}"
+        self.assertEqual(len(extract_tagged_blocks(text, ["Mnemosyne"])), 2)
+
+    def test_case_insensitive(self) -> None:
+        text = "<mnemosyne>记忆</mnemosyne>"
+        self.assertEqual(extract_tagged_blocks(text, ["Mnemosyne"]), [text])
+
+    def test_no_match(self) -> None:
+        self.assertEqual(extract_tagged_blocks("普通文本", ["Mnemosyne"]), [])
+
+    def test_empty_tags(self) -> None:
+        self.assertEqual(extract_tagged_blocks(self.BLOCK, []), [])
+        self.assertEqual(extract_tagged_blocks(self.BLOCK, [""]), [])
+
+    def test_other_tags_are_ignored(self) -> None:
+        text = f"{self.BLOCK}\n<Other>x</Other>"
+        self.assertEqual(extract_tagged_blocks(text, ["Mnemosyne"]), [self.BLOCK])
+
+    def test_context_texts_from_dict(self) -> None:
+        entry = {"role": "user", "content": "内容"}
+        self.assertEqual(context_texts(entry), ["内容"])
+
+    def test_context_texts_from_parts(self) -> None:
+        entry = {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "甲"},
+                {"type": "image_url", "image_url": {"url": "data:x"}},
+            ],
+        }
+        self.assertEqual(context_texts(entry), ["甲"])
+
+    def test_context_texts_empty(self) -> None:
+        self.assertEqual(context_texts({"role": "user", "content": ""}), [])
+        self.assertEqual(context_texts({"role": "user"}), [])
 
 
 if __name__ == "__main__":

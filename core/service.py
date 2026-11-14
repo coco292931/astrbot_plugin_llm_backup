@@ -32,6 +32,8 @@ from .session_store import SessionStore
 from .textutil import (
     chain_plain_text,
     component_kind,
+    context_texts,
+    extract_tagged_blocks,
     extract_text_parts,
     format_time,
     json_safe,
@@ -302,6 +304,7 @@ class BackupService:
         if state is None:
             return
         self._touch_state(state)
+        self._apply_request(state)
         messages = list(getattr(run_context, "messages", None) or [])
         state.baseline = len(messages)
         state.baseline_sig = message_signature(messages[-1]) if messages else ""
@@ -551,8 +554,8 @@ class BackupService:
         state.sender_name = event_sender_name(event)
         state.group_id = event_group_id(event)
         state.user_text = event_text(event)
-        state.prompt = str(getattr(request, "prompt", "") or "")
-        state.extra_text = self._extra_text(state, request)
+        state.request = request
+        self._apply_request(state)
 
         conversation = getattr(request, "conversation", None)
         cid = str(getattr(conversation, "cid", "") or "")
@@ -581,6 +584,26 @@ class BackupService:
         await self._capture_persona(umo, event, now, day)
         await self._write_pending(state)
         return state
+
+    def _apply_request(self, state: TurnState) -> None:
+        """从 ProviderRequest 快照字段；其他插件可能在本钩子之后继续改写请求。"""
+        request = state.request
+        if request is None:
+            return
+        state.prompt = str(getattr(request, "prompt", "") or "")
+        state.model = str(getattr(request, "model", "") or "")
+        state.context_count = len(list(getattr(request, "contexts", None) or []))
+        state.tools = self._tool_names(request)
+        state.extra_text = self._extra_text(state, request)
+
+        system_prompt = str(getattr(request, "system_prompt", "") or "")
+        state.system_prompt_hash = sha256_text(system_prompt)[:16] if system_prompt else ""
+        state.system_prompt_text = (
+            system_prompt
+            if system_prompt and self._capture.level("system_prompt") == "full"
+            else None
+        )
+        state.extra_blocks = self._tagged_blocks(state, request, system_prompt)
 
     def _state_of(self, event: Any) -> TurnState | None:
         umo = event_umo(event)
@@ -841,6 +864,35 @@ class BackupService:
             return ""
         known = {state.user_text.strip(), state.prompt.strip()} - {""}
         return "\n".join(chunk for chunk in chunks if chunk.strip() not in known)
+
+    def _tagged_blocks(
+        self,
+        state: TurnState,
+        request: Any,
+        system_prompt: str,
+    ) -> list[str]:
+        """找出未被其他字段完整记录的 <Tag>…</Tag> 注入块。"""
+        tags = self._capture.tagged_blocks
+        if not tags:
+            return []
+        sources: list[str] = []
+        if self._capture.level("user_input") != "full":
+            sources.append(state.prompt)
+        if system_prompt and self._capture.level("system_prompt") != "full":
+            sources.append(system_prompt)
+        for entry in getattr(request, "contexts", None) or []:
+            sources.extend(context_texts(entry))
+
+        blocks: list[str] = []
+        seen = set()
+        for source in sources:
+            for block in extract_tagged_blocks(source, tags):
+                key = block.strip()
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                blocks.append(block)
+        return blocks
 
     @staticmethod
     def _pending_tool(state: TurnState, name: str) -> ToolCallRecord | None:

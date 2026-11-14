@@ -183,6 +183,37 @@ def strip_system_reminder(text: str) -> str:
     return _BLANK_LINES_RE.sub("\n\n", value).strip()
 
 
+def extract_tagged_blocks(text: str, tags: Any) -> list[str]:
+    """提取 <Tag>…</Tag> 形式的注入块，按出现顺序返回原文。"""
+    if not text:
+        return []
+    blocks: list[str] = []
+    for tag in tags or ():
+        name = str(tag).strip().strip("<>/").strip()
+        if not name:
+            continue
+        pattern = re.compile(
+            rf"<{re.escape(name)}\b[^>]*>.*?</{re.escape(name)}>",
+            re.DOTALL | re.IGNORECASE,
+        )
+        blocks.extend(match.group(0) for match in pattern.finditer(str(text)))
+    return blocks
+
+
+def context_texts(entry: Any) -> list[str]:
+    """取出上下文条目中的文本内容。"""
+    content = (
+        entry.get("content")
+        if isinstance(entry, Mapping)
+        else getattr(entry, "content", None)
+    )
+    if isinstance(content, str):
+        return [content] if content.strip() else []
+    if isinstance(content, (list, tuple)):
+        return extract_text_parts(content)
+    return []
+
+
 def truncate_text(text: str | None, limit: int) -> str:
     if not text:
         return ""

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.3.0
+
+### 新增
+
+- 记录 `<Tag>…</Tag>` 形式的注入块到 `in.x`，默认捕获 `Mnemosyne` 长期记忆；新增 `capture.tagged_blocks` 可自定义或在置空时关闭
+- 记忆块出现在系统提示词或上下文中时，即使 `system_prompt` 只记哈希，也会单独保留原文
+- 相同记忆块在同一轮内只记录一次
+
+### 修复
+
+- 请求快照改在 `on_agent_begin` 重新读取。此前只在 `on_llm_request` 读取一次，若其他插件（如 Mnemosyne）在本插件之后改写 `prompt`、`system_prompt` 或 `extra_user_content_parts`，这些内容会漏记；而钩子顺序取决于插件加载顺序，不可依赖
+
 ## 1.2.0
 
 ### 新增

@@ -101,6 +101,21 @@ class PluginConfigExtraTests(unittest.TestCase):
         config = PluginConfig({"capture": {"extra_parts": "full"}})
         self.assertEqual(config.capture_settings().extra_parts, "full")
 
+    def test_default_tagged_blocks(self) -> None:
+        self.assertEqual(
+            PluginConfig({}).capture_settings().tagged_blocks, ("Mnemosyne",)
+        )
+
+    def test_tagged_blocks_can_be_disabled(self) -> None:
+        config = PluginConfig({"capture": {"tagged_blocks": []}})
+        self.assertEqual(config.capture_settings().tagged_blocks, ())
+
+    def test_tagged_blocks_custom_list(self) -> None:
+        config = PluginConfig({"capture": {"tagged_blocks": ["Mnemosyne", "Warn"]}})
+        self.assertEqual(
+            config.capture_settings().tagged_blocks, ("Mnemosyne", "Warn")
+        )
+
 
 class ReaderTests(unittest.TestCase):
     def test_bool_variants(self) -> None:

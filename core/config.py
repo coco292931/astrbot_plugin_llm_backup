@@ -42,6 +42,7 @@ DETAIL_PRESETS: dict[str, dict[str, Any]] = {
 _LEVELS = {"off", "summary", "full"}
 _PROMPT_LEVELS = {"off", "hash", "full"}
 _EXTRA_LEVELS = {"off", "stripped", "full"}
+DEFAULT_TAGS = ("Mnemosyne",)
 _FULL_LIMITS = {
     "user_input": "max_prompt_chars",
     "reasoning": "max_reasoning_chars",
@@ -68,6 +69,7 @@ class CaptureSettings:
     tool_results: bool = False
     system_prompt: str = "hash"
     extra_parts: str = "stripped"
+    tagged_blocks: tuple[str, ...] = DEFAULT_TAGS
     summary_chars: int = 200
     max_prompt_chars: int = 8000
     max_reasoning_chars: int = 4000
@@ -243,6 +245,7 @@ class PluginConfig:
                 if extra_raw in _EXTRA_LEVELS
                 else "stripped"
             ),
+            tagged_blocks=self._tagged_tags(),
             summary_chars=self.as_int("limits.summary_chars", 200),
             max_prompt_chars=self.as_int("limits.max_prompt_chars", 8000),
             max_reasoning_chars=self.as_int("limits.max_reasoning_chars", 4000),
@@ -251,6 +254,18 @@ class PluginConfig:
             max_tool_result_chars=self.as_int("limits.max_tool_result_chars", 2000),
             mask_patterns=tuple(self.as_list("privacy.mask_patterns")),
         )
+
+    def _tagged_tags(self) -> tuple[str, ...]:
+        raw = self.get("capture.tagged_blocks", None)
+        if raw is None:
+            return DEFAULT_TAGS
+        if isinstance(raw, str):
+            items = [item.strip() for item in raw.split(",")]
+        elif isinstance(raw, (list, tuple, set)):
+            items = [str(item).strip() for item in raw]
+        else:
+            return DEFAULT_TAGS
+        return tuple(item for item in items if item)
 
     @property
     def media(self) -> MediaConfig:

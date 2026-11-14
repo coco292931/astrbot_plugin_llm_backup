@@ -40,6 +40,8 @@ class TurnState:
     user_text: str = ""
     prompt: str = ""
     extra_text: str = ""
+    extra_blocks: list[str] = field(default_factory=list)
+    request: Any = None
     input_media: list[dict[str, Any]] = field(default_factory=list)
     model: str = ""
     context_count: int = 0
@@ -215,6 +217,11 @@ def build_turn_record(
     extra = capture.extra(state.extra_text)
     if extra:
         inbound["x"] = extra
+    blocks = [capture.extra(block) for block in state.extra_blocks]
+    blocks = [block for block in blocks if block]
+    if blocks:
+        merged = inbound.get("x")
+        inbound["x"] = "\n\n".join([merged, *blocks]) if merged else "\n\n".join(blocks)
     paths = media_paths(state.input_media)
     if paths:
         inbound["m"] = paths

@@ -120,6 +120,8 @@ Windows 与 Linux 通用：路径分隔符、非法字符、保留名、长度�
 
 只有提醒块时 `off` 与 `stripped` 结果相同，不会产生额外字段。
 
+`capture.tagged_blocks` 指定需要额外捕获的标签，默认 `["Mnemosyne"]`。凡是被 `<Tag>…</Tag>` 包裹的内容（如记忆插件的长期记忆）都会写入 `in.x`，即使它出现在系统提示词或上下文里、而对应字段只记录了哈希或摘要。留空表示关闭。
+
 截断上限在 `limits.*` 中设置，默认摘要 200 字、用户输入 8000 字、思考 4000 字、回复 8000 字、工具参数与结果各 2000 字。
 
 `privacy.mask_patterns` 可以填入正则，命中内容在落盘前替换为 `***`。
@@ -186,6 +188,21 @@ Windows 与 Linux 通用：路径分隔符、非法字符、保留名、长度�
 | `performance.finalize_debounce_seconds` | 20 | 收到回复后仍未结束时的兜底落盘延时，0 为关闭 |
 
 会话活动时间由真正触发 LLM 的消息更新，插件不会注册普通消息处理器，因此不影响 AstrBot 原有的唤醒判定。
+
+## 与其他插件共存
+
+以 Mnemosyne 记忆插件为例，四种记忆注入方式都能被记录：
+
+| `memory_injection_method` | 注入位置 | 落盘字段 |
+| --- | --- | --- |
+| `user_prompt`（默认） | `req.prompt` 前/后 | `in.p` |
+| `extra_user_parts` | `req.extra_user_content_parts` | `in.x` |
+| `system_prompt` | `req.system_prompt` | `in.x`（`capture.system_prompt=full` 时在 `req.sp.t`） |
+| `insert_system_prompt` | `req.contexts` | `in.x` |
+
+请求快照在 `on_agent_begin` 时重新读取，因此其他插件在 `on_llm_request` 中晚于本插件改写请求也不会漏记——`on_llm_request` 的处理器执行顺序取决于插件加载顺序，不可依赖。
+
+自定义标签（例如其他插件使用 `<Memory>`）时把它加入 `capture.tagged_blocks` 即可。
 
 ## 数据格式
 

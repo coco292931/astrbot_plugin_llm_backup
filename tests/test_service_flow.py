@@ -39,6 +39,150 @@ PERSONA = {
 }
 
 
+MEMORY_BLOCK = (
+    "<Mnemosyne> 长期记忆片段：\n- [2026-11-01 10:00] 用户喜欢猫\n</Mnemosyne>"
+)
+
+
+class MemoryInjectionTests(unittest.IsolatedAsyncioTestCase):
+    """对齐 astrbot_plugin_mnemosyne 的四种记忆注入方式。"""
+
+    def setUp(self) -> None:
+        self._temp = tempfile.TemporaryDirectory()
+        self.root = Path(self._temp.name)
+        self.data_dir = self.root / "data"
+        self.data_dir.mkdir()
+        self.service: BackupService | None = None
+
+    async def asyncTearDown(self) -> None:
+        if self.service is not None:
+            await self.service.stop()
+        self._temp.cleanup()
+
+    async def _start(self, extra: dict | None = None) -> BackupService:
+        raw = {"enabled": True, "detail_level": "standard"}
+        raw.update(extra or {})
+        service = BackupService(PluginConfig(raw), self.data_dir)
+        await service.start()
+        self.service = service
+        return service
+
+    def _event(self) -> FakeEvent:
+        return FakeEvent(
+            message=[FakePart("Plain", text="你好")],
+            umo="test:FriendMessage:2111565284",
+        )
+
+    def _records(self) -> list[dict]:
+        files = sorted((self.data_dir / "backup" / "sessions").rglob("*.jsonl"))
+        rows: list[dict] = []
+        for path in files:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    rows.append(json.loads(line))
+        return rows
+
+    async def _finish(self, service: BackupService, event: FakeEvent) -> dict:
+        await service.handle_agent_done(
+            event, FakeRunContext([FakeMessage("system", "sys")]), None
+        )
+        await service._writer.flush()
+        return self._records()[0]
+
+    async def test_user_prompt_injection_is_recorded(self) -> None:
+        service = await self._start()
+        event = self._event()
+        request = FakeRequest(prompt=f"{MEMORY_BLOCK}\n你好")
+        await service.handle_llm_request(event, request)
+        record = await self._finish(service, event)
+        self.assertIn("<Mnemosyne>", record["in"]["p"])
+
+    async def test_late_injection_after_our_hook_is_recorded(self) -> None:
+        """钩子顺序不确定：其他插件可能在我们之后写入请求。"""
+        service = await self._start()
+        event = self._event()
+        request = FakeRequest(prompt="你好")
+        await service.handle_llm_request(event, request)
+        request.prompt = f"{MEMORY_BLOCK}\n你好"
+        await service.handle_agent_begin(
+            event, FakeRunContext([FakeMessage("system", "sys"), FakeMessage("user", "你好")])
+        )
+        record = await self._finish(service, event)
+        self.assertIn("<Mnemosyne>", record["in"]["p"])
+
+    async def test_extra_user_parts_injection_is_recorded(self) -> None:
+        service = await self._start()
+        event = self._event()
+        request = FakeRequest(
+            prompt="你好",
+            extra_user_content_parts=[FakePart("text", text=MEMORY_BLOCK)],
+        )
+        await service.handle_llm_request(event, request)
+        record = await self._finish(service, event)
+        self.assertIn("<Mnemosyne>", record["in"]["x"])
+
+    async def test_system_prompt_injection_is_recorded_in_x(self) -> None:
+        service = await self._start()
+        event = self._event()
+        request = FakeRequest(prompt="你好", system_prompt=f"你是助手\n{MEMORY_BLOCK}")
+        await service.handle_llm_request(event, request)
+        await service.handle_agent_begin(
+            event, FakeRunContext([FakeMessage("system", "sys")])
+        )
+        record = await self._finish(service, event)
+        self.assertEqual(record["in"]["x"], MEMORY_BLOCK)
+        self.assertNotIn("Mnemosyne", record["req"]["sp"])
+
+    async def test_system_prompt_injection_not_duplicated_when_full(self) -> None:
+        service = await self._start({"capture": {"system_prompt": "full"}})
+        event = self._event()
+        request = FakeRequest(prompt="你好", system_prompt=f"你是助手\n{MEMORY_BLOCK}")
+        await service.handle_llm_request(event, request)
+        await service.handle_agent_begin(
+            event, FakeRunContext([FakeMessage("system", "sys")])
+        )
+        record = await self._finish(service, event)
+        self.assertNotIn("x", record["in"])
+        self.assertIn("<Mnemosyne>", record["req"]["sp"]["t"])
+
+    async def test_contexts_injection_is_recorded_in_x(self) -> None:
+        service = await self._start()
+        event = self._event()
+        request = FakeRequest(
+            prompt="你好",
+            contexts=[{"role": "system", "content": MEMORY_BLOCK}],
+        )
+        await service.handle_llm_request(event, request)
+        record = await self._finish(service, event)
+        self.assertEqual(record["in"]["x"], MEMORY_BLOCK)
+
+    async def test_tagged_blocks_disabled(self) -> None:
+        service = await self._start({"capture": {"tagged_blocks": []}})
+        event = self._event()
+        request = FakeRequest(
+            prompt="你好",
+            contexts=[{"role": "system", "content": MEMORY_BLOCK}],
+        )
+        await service.handle_llm_request(event, request)
+        record = await self._finish(service, event)
+        self.assertNotIn("x", record["in"])
+
+    async def test_duplicate_memory_is_recorded_once(self) -> None:
+        service = await self._start()
+        event = self._event()
+        request = FakeRequest(
+            prompt="你好",
+            system_prompt=f"你是助手\n{MEMORY_BLOCK}",
+            contexts=[{"role": "system", "content": MEMORY_BLOCK}],
+        )
+        await service.handle_llm_request(event, request)
+        await service.handle_agent_begin(
+            event, FakeRunContext([FakeMessage("system", "sys")])
+        )
+        record = await self._finish(service, event)
+        self.assertEqual(record["in"]["x"].count("<Mnemosyne>"), 1)
+
+
 class ServiceFlowTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self._temp = tempfile.TemporaryDirectory()
